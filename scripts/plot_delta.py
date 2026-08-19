@@ -38,32 +38,46 @@ shells._load(data_dir, 0,)
 plt.ion()
 fig, ax = plt.subplots(1, 1, figsize=(8, 7))
 
-r_c, n = shells.density()
+r_c, n, n_err = shells.density()
 valid  = np.isfinite(n)
 n_bar = np.nanmean(n[valid])
 
-line_n,   = ax.loglog(r_c[valid], sn.gaussian_filter(n[valid]/n_bar, sigma=sig),
-                      color='steelblue', lw=1.8, label=r'$n(r)$')
+y     = sn.gaussian_filter(n[valid]/n_bar, sigma=sig)
+# NOTE: smoothing the error the same way as the central value is a
+# conservative simplification (real smoothing reduces variance further,
+# so this slightly overestimates the true error of the smoothed curve),
+# but keeps the band visually consistent with the smoothed line.
+yerr  = sn.gaussian_filter(n_err[valid]/n_bar, sigma=sig)
+
+line_n,   = ax.plot(r_c[valid], y, color='steelblue', lw=1.8, label=r'$n(r)$')
+band      = ax.fill_between(r_c[valid], y-yerr, y+yerr, color='steelblue', alpha=0.25)
 line_nbar = ax.axhline(n_bar/n_bar, color='k', lw=2, ls='--',alpha=0.6)
 line_phi = ax.axvline(1/shells.a, color='navy', lw=1.5, label=r'$\lambda_\phi$')
 
 ax.set_xlabel(r'$rm_\phi$')
 ax.set_ylabel(r'$\delta_\nu$')
 ax.legend()
-ax.set_xlim(5, 1.1 * shells.Rmax)
-ax.set_ylim(1e-1, 100)
 
 title = fig.suptitle(r'$z=%.2f$' % (1/shells.a - 1))
 
 for i in range(len(files)):
     shells._load(data_dir, i,)
 
-    r_c, n = shells.density()
+    r_c, n, n_err = shells.density()
     valid  = np.isfinite(n)
     n_bar = np.nanmean(n[valid])
-    line_n.set_data(r_c[valid], sn.gaussian_filter(n[valid]/n_bar, sigma=sig))
+    y    = sn.gaussian_filter(n[valid]/n_bar, sigma=sig)
+    yerr = sn.gaussian_filter(n_err[valid]/n_bar, sigma=sig)
+    line_n.set_data(r_c[valid], y)
     line_phi.set_xdata([1/shells.a, 1/shells.a])
-    #ax.set_xlim(1/shells.a, 1.1 * shells.Rmax) # Show only scales larger than r_phi
+
+    band.remove()
+    band = ax.fill_between(r_c[valid], y-yerr, y+yerr, color='steelblue', alpha=0.25)
+
+    # Rescale to the current shell extent each frame, so the plot follows
+    # the collapsing core instead of clipping it out at a fixed r=5 floor.
+    ax.set_xlim(0.9 * r_c[valid].min(), 1.1 * r_c[valid].max())
+    ax.set_ylim(0.5 * np.nanmin(y), 2.0 * np.nanmax(y))
 
     z = 1/shells.a - 1
     title.set_text(r'$z=%.2f$' % z)

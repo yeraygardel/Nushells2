@@ -41,7 +41,7 @@ skip = 10 if shells.N > 1000 else 1
 rmin = shells.R.min()
 rmax = shells.R.max()
 
-w_thr = 0.05
+w_thr = np.percentile(shells.w, 5)   # scale-independent: hide the dimmest 5%
 R_vals = shells.R[::skip]
 W_vals = shells.w[::skip]
 
@@ -74,8 +74,8 @@ force_bar, = ax.plot([0, 0], [1.15, 1.15], color='navy', lw=3,
 force_label = ax.text(0.01, 1.17, '', transform=ax.transAxes,
                        color='navy', fontsize=12, va='bottom')
 
-ax.set_xlim(-shells.R.max(), shells.R.max())
-ax.set_ylim(-shells.R.max(), shells.R.max())
+ax.set_xlim(-shells.Rmax, shells.Rmax)
+ax.set_ylim(-shells.Rmax, shells.Rmax)
 ax.set_aspect('equal')
 ax.set_xticks([])
 ax.set_yticks([])

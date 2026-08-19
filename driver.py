@@ -10,18 +10,24 @@ from force import solveYukawaForce, solveGravityForce
 
 
 # === Main params ============================================================
-Nshells = 1000         # Number of simulation shells
+Nshells = 6000          # Number of simulation shells
 g       = 1e-26        # Yukawa coupling constant
-m_nu    = 0.1          # Neutrino  mass (eV)
+m_nu    = 0.06         # Neutrino  mass (eV)
 m_phi   = 1e-29        # Scalar field mass (eV)
 seed    = 9            # IC random seed 
 dt_frac = 0.3          # Time step fractions (Courant-like)
-ti_frac = 0.75         # Initial time controller (a_i=ti_frac*a_NR)
+ti_frac = 54.241701019743985  # Initial time controller (a_i=ti_frac*a_NR); z_ini~10, verified to survive past step 3200 (54.24 rounded crashes at step 2957)
 tf_frac = 2.0          # Final time controller (a_f=tf_frac*1/mphi)
+a_ini   = 0.049072113904004754  # Directly set the starting scale factor (z_ini~19.4)
+a_end   = 0.125   # z_end = 7
+Rmin    = 0.204         # Directly set the inner domain boundary (reflecting wall)
+Rmax    = 140           # Directly set the outer domain boundary (reflecting wall)
+ic_file = 'shells.csv'  # qt=0 (no angular momentum barrier), qr/w unchanged
+phi_bkg_file = 'phiback.csv'  # (a, phi) table for the boundary term beyond Rmax
 
 # === Output params ==========================================================
 odir = 'output'        # Output directory (data and logs)
-nmeas = 50             # Number of measurements
+nmeas = 100             # Number of measurements
 logmeas = True         # Logarithmic spacing (in a) for measurements
 hdf5_io = True         # Saved in HDF5 format (True) or .txt (False)
 to_file = True         # Print to file (True) or to screen (False)
@@ -34,7 +40,7 @@ method = 'anderson'    # Iteration method:
                        #   'anderson' : uses scipy.optimise.anderson
                        #                to accelerate the iteration
                        #   'noiter'   : one evaluation only
-tol = 1e-3             # Tolerance level for the iterations
+tol = 1e-2             # Tolerance level for the iterations
 soft = 1e-2            # Softening parameter to define minimum radius 
 keep_fs = True         # Keep free-streaming in the loop (False for testing)
 keep_lr = True         # Keep Yukawa force in the loop (False for testing)
@@ -51,9 +57,10 @@ if __name__ == "__main__":
 
     shells = Shells()
     shells.init(Nshells, g=g, m_phi=m_phi, m_nu=m_nu, kappa=ti_frac,
-                kappa2=tf_frac, dt_frac=dt_frac, iter_m=method, iter_tol=tol,
-                soft=soft, hdf5_io=hdf5_io, seed=seed, odir=odir,verb=verb,
-                to_file=to_file)
+                kappa2=tf_frac, a_ini=a_ini, a_end=a_end, Rmin=Rmin, Rmax=Rmax,
+                dt_frac=dt_frac, iter_m=method, iter_tol=tol, soft=soft,
+                hdf5_io=hdf5_io, seed=seed, odir=odir, verb=verb,
+                to_file=to_file, ic_file=ic_file, phi_bkg_file=phi_bkg_file)
 
     if ic_only:
         shells._save(odir, 0)

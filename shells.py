@@ -13,12 +13,12 @@ from force import solveYukawaForce, solveGravityForce
 
 
 ## Constants
-T_NU_EV = 1.676e-4             # Neutrino temperature today [eV]
+T_NU_EV = 1.68e-4             # Neutrino temperature today [eV]
 Q_MEAN  = 3.1514               # <q/T_nu> for Fermi-Dirac distribution
 EV_2_PC = 1/(1.57e23)          # eV to pc conversion
 PC_2_M  = 3.08567758128e16     # pc to meter conversion
-H0_EV   = 1.444e-33            # Hubble constant today  [eV]
-M_PL    = 2.4e27               # Reduced Planck mass [eV]
+H0_EV   = 1.446e-33            # Hubble constant today  [eV] (Assuming h=0.678)
+M_PL    = 2.435e27               # Reduced Planck mass [eV]
 
 
 
@@ -87,15 +87,23 @@ class Shells:
         self.a_ini  = None
         self.a_end  = None   # when force range shrinks below Rmin
 
+        # External background field table
+        self._phi_bkg_table_a = None
+        self._phi_bkg_table_v = None
+
 
     @timed("Init")
     def init(self,
              Nshells  = 1000,
              g        = 1e-26,
              m_phi    = 1e-29,          # eV
-             m_nu     = 0.1,            # eV
-             kappa    = 0.75,           # a_ini = kappa * a_NR
-             kappa2   = 0.75,           # a_end = kappa2 * 1 / R_min
+             m_nu     = 0.06,            # eV
+             kappa    = 0.75,           # a_ini = kappa * a_NR (ignored if a_ini given directly)
+             kappa2   = 0.75,           # a_end = kappa2 * 1 / R_min (ignored if a_end given directly)
+             a_ini    = None,           # Directly set the starting scale factor, overrides kappa
+             a_end    = None,           # Directly set the ending scale factor, overrides kappa2
+             Rmin     = None,           # Directly set the inner domain boundary
+             Rmax     = None,           # Directly set the outer domain boundary
              dt_frac  = 0.3,            # Courant factor
              soft     = 1e-3,           # softening length: "minimum Radius"
              iter_m   = 'anderson',     # method in phi iteration
@@ -104,7 +112,11 @@ class Shells:
              seed     = 9,              # IC seed
              odir     = 'output',       # Output directory
              verb     = 0,              # Verbosity level
-             to_file  = True            # Log to file instead of print
+             to_file  = True,           # Log to file instead of print
+             psi_boost = 1.0,           # Multiplier on the seed potential Psi(r)
+             ic_file  = None,           # CSV path (columns R,qr,qt,w) to load ICs from
+             phi_bkg_file = None        # CSV path (columns a,phi_bkg) for the background
+                                        # field beyond Rmax, precomputed externally
             ):
         """
         Initialize N shells in dimensionless units.
@@ -120,8 +132,22 @@ class Shells:
             Neutrino mass in eV. Default is 0.1.
         kappa : float, optional
             Sets the initial scale factor: a_ini = kappa * a_NR.
+            Ignored if a_ini is given directly.
         kappa2 : float, optional
             Sets the final scale factor: a_end = kappa2 / R_min.
+            Ignored if a_end is given directly.
+        a_ini : float, optional
+            Directly set the starting scale factor, bypassing kappa's
+            physically-motivated derivation. Default is None (use kappa).
+        a_end : float, optional
+            Directly set the ending scale factor, bypassing kappa2's
+            physically-motivated derivation. Default is None (use kappa2).
+        Rmin : float, optional
+            Directly set the inner domain boundary (reflecting wall),
+            bypassing the default 0.01*l_phi derivation.
+        Rmax : float, optional
+            Directly set the outer domain boundary (reflecting wall),
+            bypassing the default 10*max(l_phi, l_fs) derivation.
         dt_frac : float, optional
             Courant factor controlling timestep size.
         soft : float, optional
@@ -140,10 +166,23 @@ class Shells:
             Verbosity level (0: INFO, 1: DEBUG).
         to_file : bool, optional
             If True, log output to file instead of printing.
+        psi_boost : float, optional
+            Multiplier applied to the seed potential Psi(r). Default is 1.0
+            (no change). Useful for testing with a stronger/weaker seed
+            perturbation without changing the underlying physical params.
+        ic_file : str, optional
+            Path to a CSV file with a header row and columns R, qr, qt, w,
+            giving each shell's radius, radial momentum, transverse
+            momentum, and phase-space weight. If given, these replace the
+            built-in IC generator entirely (no Fermi-Dirac/Psi sampling),
+            and Nshells is overridden by the file's row count. Rows are
+            re-sorted ascending in R internally (required by the force
+            solver), so input order does not matter.
         """
 
         start = time.time()
         self.verb = verb
+        self.psi_boost = psi_boost
         self.log = createLog(self.verb, toFile=to_file)
         self.to_file = to_file
         self.hdf5_io  = hdf5_io
@@ -176,10 +215,11 @@ class Shells:
         self.m0        = self.m0_hat
 
         # -------------------------------------------------------------------
-        # Scale factors
+        # Scale factors (Not used if I input initial conditions)
         # -------------------------------------------------------------------
         self.a_NR  = 1.0 / self.m0_hat
-        a_ini      = kappa * self.a_NR
+        if a_ini is None:
+            a_ini = kappa * self.a_NR
         self.a     = a_ini
         self.a_ini = a_ini
         self.eta   = 2/self.H0*np.sqrt(self.a)
@@ -187,16 +227,18 @@ class Shells:
         self.meas  = 0
 
         # -------------------------------------------------------------------
-        # Length/time scales
+        # Length/time scales (Not used for input initial conditions)
         # -------------------------------------------------------------------
         self.l_phi = 1.0 / a_ini
         l_fs_rad   = self._lambdaFS_rad()
         self.l_fs  = l_fs_rad + 2.0 / self.m_phi_hat * \
                          (1.0/np.sqrt(a_ini) - 1.0/np.sqrt(self.a_NR))
 
-        self.Rmin  = 0.01 * self.l_phi
-        self.Rmax  = 10.0 * max(self.l_phi, self.l_fs)
-        self.a_end = 1.0 / self.Rmin * kappa2
+        self.Rmin  = 0.01 * self.l_phi if Rmin is None else Rmin
+        self.Rmax  = 10.0 * max(self.l_phi, self.l_fs) if Rmax is None else Rmax
+        if a_end is None:
+            a_end = 1.0 / self.Rmin * kappa2
+        self.a_end = a_end
 
         R0 = self.l_phi
         self.R0 = R0
@@ -212,38 +254,67 @@ class Shells:
         z_end = 1/self.a_end-1
 
         # -------------------------------------------------------------------
-        # r_hat, q_hat
+        # Cosmological perturbation params (needed either way, for gravity)
         # -------------------------------------------------------------------
-        r_grid  = np.geomspace(self.Rmin, self.Rmax, Nshells)
-        dr      = np.empty(Nshells)
-        dr[:-1] = r_grid[1:] - r_grid[:-1]
-        dr[-1]  = dr[-2]
-
-        q_arr  = ic.sample_q(self, Nshells)
-        mu_arr = np.random.uniform(-1.0, 1.0, Nshells)  # cos(theta)
-
-        # -------------------------------------------------------------------
-        # Compute perturbation profiles
-        # -------------------------------------------------------------------
-        self.delta0 = 1.73342 / (z_ini**(0.7358) * self.frange**(0.0992))
+        #self.delta0 = 1.73342 / (z_ini**(0.7358) * self.frange**(0.0992))
+        self.delta0 = 0.0
         self.omega0 = 0.3
-
-        psi = ic.compute_Psi(r_grid, self)
-        weights, df = ic.compute_weights(r_grid, dr, q_arr, psi, self.log)
-        self.df = df
+        self.omegaL = 0.7   # Omega_DarkEnergy, flat universe: omega0 + omegaL = 1
 
         # -------------------------------------------------------------------
-        # Radial and angular momentum
+        # r_hat, q_hat -- either generated internally, or loaded from a CSV
         # -------------------------------------------------------------------
-        hat_qr = q_arr * mu_arr
-        hat_qT = q_arr * np.sqrt(np.maximum(1.0 - mu_arr**2, 0.0))
-        hat_ell = r_grid * hat_qT
+        if ic_file is not None:
+            ic_data = np.genfromtxt(ic_file, delimiter=',', names=True)
+            order   = np.argsort(ic_data['R'])   # force solver requires ascending R
+            r_grid  = ic_data['R'][order]
+            hat_qr  = ic_data['qr'][order]
+            hat_qT  = ic_data['qt'][order]
+            weights = ic_data['w'][order]
+            hat_ell = r_grid * hat_qT
+            Nshells = len(r_grid)
+
+            psi = ic.compute_Psi(r_grid, self)
+            self.df = None
+            self.log.info(f"[IC] Loaded {Nshells} shells from {ic_file}")
+        else:
+            r_grid  = np.geomspace(self.Rmin, self.Rmax, Nshells)
+            dr      = np.empty(Nshells)
+            dr[:-1] = r_grid[1:] - r_grid[:-1]
+            dr[-1]  = dr[-2]
+
+            q_arr  = ic.sample_q(self, Nshells)
+            mu_arr = np.random.uniform(-1.0, 1.0, Nshells)  # cos(theta)
+
+            psi = ic.compute_Psi(r_grid, self)
+            weights, df = ic.compute_weights(r_grid, dr, q_arr, psi, self.log)
+            self.df = df
+
+            hat_qr = q_arr * mu_arr
+            hat_qT = q_arr * np.sqrt(np.maximum(1.0 - mu_arr**2, 0.0))
+            hat_ell = r_grid * hat_qT
 
         # -------------------------------------------------------------------
         # Initial guess for Yukawa potential
         # -------------------------------------------------------------------
         _, phi_guess = self._solve_background()
-        self.phi_bkg = phi_guess
+        self.phi_bkg = -0.3179603255361576
+
+        # -------------------------------------------------------------------
+        # External background field table (a, phi_bkg), for the boundary
+        # term representing material beyond Rmax -- precomputed externally
+        # and interpolated here since evolving it in-loop is far too slow
+        # (~23ms per _solve_background() call vs ~3ms per full step).
+        # -------------------------------------------------------------------
+        self._phi_bkg_table_a = None
+        self._phi_bkg_table_v = None
+        if phi_bkg_file is not None:
+            tbl = np.genfromtxt(phi_bkg_file, delimiter=',', names=True)
+            order = np.argsort(tbl['a'])
+            self._phi_bkg_table_a = tbl['a'][order]
+            self._phi_bkg_table_v = tbl['phi'][order]
+            self.log.info(f"[IC] Loaded background field table from {phi_bkg_file}")
+            self._update_phi_bkg()
 
         # -------------------------------------------------------------------
         # Initialiase data structure
@@ -265,8 +336,14 @@ class Shells:
         # is reached, however the tolerance can still be chosen
         # -------------------------------------------------------------------
         #_ = solvePhi(self, method="anderson", tol=iter_tol, verbose=verb)
-        _ = solvePhi(self, method=self.iter_m,\
-                     tol=self.iter_tol, verbose=self.verb)
+        try:
+            _ = solvePhi(self, method=self.iter_m,\
+                         tol=self.iter_tol, verbose=self.verb)
+        except scipy.optimize.NoConvergence:
+            self.log.info("[Init] anderson solve_phi did not converge, "
+                           "retrying with 'naive'")
+            _ = solvePhi(self, method="naive", tol=self.iter_tol,
+                         max_iter=3000, damp=0.3, verbose=self.verb)
 
         # -------------------------------------------------------------------
         # Set self.data["m"] and self.data["eps"]
@@ -314,7 +391,7 @@ class Shells:
     @timed("update_mass")
     def _update_mass(self):
         """ """
-        self.data['m'] = self.m0 + self.data["phi"]
+        self.data['m'] = self.m0  + self.data["phi"]
         if np.any(self.m < 0):
             self.log.info("The effective mass has negative values!")
 
@@ -369,12 +446,35 @@ class Shells:
     def _update_a(self):
         """
         Scale factor update
-        Matter domination: da/deta = H0*sqrt(a)
-                           da/d(hat_eta) = sqrt(a) / m_phi_hat
+        Matter + dark energy: H^2 = H0^2*(Omega_m/a^3 + Omega_L)
+                    da/deta = a^2*H = H0*sqrt(Omega_m*a + Omega_L*a^4)
+                    da/d(hat_eta) = sqrt(omega0*a + omegaL*a**4) / m_phi_hat
+        H0 here is the real, measured present-day Hubble constant (H0_EV),
+        so this needs the explicit Omega_m, Omega_L factors -- omitting them
+        implicitly assumes Omega_m=1 (Einstein-de Sitter) while still using
+        the real H0.
         """
-        self.a += self.dt * np.sqrt(self.a) / self.m_phi_hat
+        self.a += self.dt * np.sqrt(self.omega0*self.a + self.omegaL*self.a**4) \
+                   / self.m_phi_hat
         z = 1/self.a-1
         self.log.debug(f"[da] Time update -> {self.a:.5f}")
+
+
+    # -----------------------------------------------------------------------
+    # Background field update (from externally-supplied table, if any)
+    # -----------------------------------------------------------------------
+    def _update_phi_bkg(self):
+        """
+        Interpolate self.phi_bkg from the externally-loaded (a, phi_bkg)
+        table at the current scale factor. No-op if no table was loaded
+        (phi_bkg_file=None), in which case phi_bkg keeps whatever value it
+        already has. Clamps at the table edges rather than extrapolating,
+        same convention as interpPhi.
+        """
+        if self._phi_bkg_table_a is not None:
+            self.phi_bkg = float(np.interp(
+                self.a, self._phi_bkg_table_a, self._phi_bkg_table_v,
+                left=self._phi_bkg_table_v[0], right=self._phi_bkg_table_v[-1]))
 
 
     # -----------------------------------------------------------------------
@@ -465,6 +565,7 @@ class Shells:
         # -- Sort and updates --
         self._sort()
         self._update_a()
+        self._update_phi_bkg()
         self._update_eps()
 
         self.curr += 1
@@ -472,8 +573,19 @@ class Shells:
         # -- Phi and Force updates
         phi0_interp = interpPhi(R_old, phi_old, self.data['R'])
         self.data['phi'] = phi0_interp
-        _ = solvePhi(self, method=self.iter_m,\
-                     tol=self.iter_tol, verbose=self.verb)
+        try:
+            _ = solvePhi(self, method=self.iter_m,\
+                         tol=self.iter_tol, verbose=self.verb)
+        except scipy.optimize.NoConvergence:
+            # Anderson mixing can fail to converge once a shell's mass is
+            # pinned against the -0.999*m0 floor (a non-smooth kink in the
+            # fixed-point map), which happens transiently during deep
+            # collapse. Fall back to the slower but more robust damped
+            # 'naive' iteration instead of aborting the run.
+            self.log.info(f"[step {self.curr:5d}] {self.iter_m} solve_phi "
+                           "did not converge, retrying with 'naive'")
+            _ = solvePhi(self, method="naive", tol=self.iter_tol,
+                         max_iter=3000, damp=0.3, verbose=self.verb)
 
         self._update_mass()
         self._update_eps()
@@ -555,6 +667,7 @@ class Shells:
             head.attrs['m0'] = self.m0
             head.attrs['delta0'] = self.delta0
             head.attrs['omega0'] = self.omega0
+            head.attrs['omegaL'] = self.omegaL
             head.attrs['dt'] = self.dt
             head.attrs['phib'] = self.phi_bkg
 
@@ -619,6 +732,7 @@ class Shells:
             self.m0 = float(f['Header'].attrs['m0'])
             self.R0 = float(f['Header'].attrs['R0'])
             self.omega0 = float(f['Header'].attrs['omega0'])
+            self.omegaL = float(f['Header'].attrs['omegaL'])
             self.delta0 = float(f['Header'].attrs['delta0'])
             self.dt = float(f['Header'].attrs['dt'])
             self.m_phi = float(f['Header'].attrs['m_phi'])
@@ -728,21 +842,29 @@ class Shells:
 
         Returns
         -------
-        r_c : array  hat_r bin centres
-        n   : array  number density
+        r_c   : array  hat_r bin centres
+        n     : array  number density
+        n_err : array  standard error on n, from sqrt(sum(w_i^2)) per bin
+                (the appropriate estimator for a weighted histogram, since
+                shells carry unequal importance-sampling weights -- reduces
+                to the usual sqrt(N) Poisson error only if all w_i are equal)
         """
         self._sort()
         edges = np.geomspace(np.min(self.R), np.max(self.R), nbins + 1)
         r_c   = np.sqrt(edges[:-1] * edges[1:])
         vol   = (4.0/3.0) * np.pi * (edges[1:]**3 - edges[:-1]**3)
 
-        mass, _ = np.histogram(self.data['R'], bins=edges,
-                               weights=self.data['w'])
+        mass, _  = np.histogram(self.data['R'], bins=edges,
+                                weights=self.data['w'])
+        sumw2, _ = np.histogram(self.data['R'], bins=edges,
+                                weights=self.data['w']**2)
 
         occ = mass > 0
         n      = np.full_like(r_c, np.nan)
-        n[occ] = mass[occ] / vol[occ]
-        return r_c[occ], n[occ]
+        n_err  = np.full_like(r_c, np.nan)
+        n[occ]     = mass[occ]  / vol[occ]
+        n_err[occ] = np.sqrt(sumw2[occ]) / vol[occ]
+        return r_c[occ], n[occ], n_err[occ]
 
 
     # -----------------------------------------------------------------------

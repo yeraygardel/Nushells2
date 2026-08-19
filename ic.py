@@ -1,5 +1,6 @@
 import scipy
 import numpy as np
+from scipy.special import erf
 
 
 # -----------------------------------------------------------------------
@@ -32,6 +33,12 @@ def compute_weights(r, dr, q, Psi, log):
     """
     Phase-space weight for one shell.
 
+    q is drawn (in ic.sample_q) via importance sampling from a density
+    already proportional to q^2*f0(q), so for the Monte Carlo estimator
+    weight = g(q)/p(q) that background shape cancels against the sampling
+    density itself and must not be multiplied in again here -- only the
+    linear perturbation factor (1+Theta) remains explicit.
+
     Parameters
     ----------
     r   : hat_r
@@ -41,7 +48,7 @@ def compute_weights(r, dr, q, Psi, log):
 
     Returns
     -------
-    w  : float, proportional to r^2 dr * q^2 * f(q) * (1 + perturbation)
+    w  : float, proportional to r^2 dr * (1 + perturbation)
     df : float, delta f perturbation
     """
 
@@ -53,7 +60,7 @@ def compute_weights(r, dr, q, Psi, log):
         8.0 * np.pi**2    # solid angle factor
         * r**2 * dr       # radial volume element [1/m_phi]^3
         * (1.0 - Psi)     # metric perturbation correction
-        * f0 * pert       # linearised perturbation (delta f)
+        * pert            # linearised perturbation, background cancels against sample density
     )
 
     log.debug(f"[IC] Computed weights")
@@ -64,15 +71,17 @@ def compute_weights(r, dr, q, Psi, log):
 # Grav. potential computation
 # -----------------------------------------------------------------------
 def compute_Psi(R, shells):
-    """ """
+    """ Seed potential, scaled by shells.psi_boost (default 1.0, no change). """
     a      = shells.a
     mphi   = shells.m_phi_hat
     rho    = R / shells.R0
-    delta0 = shells.delta0
+    delta0 = 5*10**(-3)
+    aini=10**(-4)
     omega0 = shells.omega0
+    rini0=1
 
-    norm = - 1.0 / (16.0 * 3.0 * np.sqrt(3) * np.pi**3)
-    psi = norm * omega0 * delta0 / (a**3 *  mphi**2) * np.exp(1.5-0.5*rho**2)
+    norm = - (2.0*np.pi/3)*(1/mphi)**2*omega0*(delta0/aini)*rini0**3
+    psi = norm * (1/R)*erf(R/(2**(1/2)*rini0))
     shells.log.debug(f"[IC] Computed gravitational potential Psi")
     return psi
 

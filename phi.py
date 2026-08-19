@@ -42,6 +42,7 @@ def _computePhi(shells, xi_cap=500.0):
     xi_raw  = a * R
     xi      = np.minimum(xi_raw, xi_cap)
     capped  = xi_raw >= xi_cap
+    xi_max  = a*140
 
     e        = np.exp(-xi)
     sinh_xi  = np.sinh(xi)
@@ -55,15 +56,17 @@ def _computePhi(shells, xi_cap=500.0):
     inn  = moe * inn_weight
 
     # Cumulative sums over sorted shells.
-    # sum_outer[i] = sum_{j < i} out_j : all shells inside  R_i
-    # sum_inner[i] = sum_{j > i} inn_j : all shells outside R_i
+    # sum_outer[i] = sum_{j <= i} out_j : all shells inside R_i, INCLUDING
+    #                the shell's own self-contribution (added here so it
+    #                isn't double-counted via sum_inner below -- the outer
+    #                and inner kernels are equal exactly at j=i, so the
+    #                self-term only needs to appear in one of the two sums)
+    # sum_inner[i] = sum_{j > i}  inn_j : all shells strictly outside R_i
     cumOut = np.cumsum(out)
     cumInn = np.cumsum(inn)
     totInn = cumInn[-1]
 
-    sum_outer      = np.empty(N)
-    sum_outer[0]   = 0.0
-    sum_outer[1:]  = cumOut[:-1]
+    sum_outer = cumOut.copy()
 
     sum_inner      = np.empty(N)
     sum_inner[-1]  = 0.0
@@ -74,10 +77,15 @@ def _computePhi(shells, xi_cap=500.0):
     # sinh(xi_i)/R_i  multiplies the inner sum (shells outside R_i)
     exp_over_r  = e / R
     sinh_over_r = np.where(capped, 0.0, sinh_xi / R)
+    boundaryphi = ((4.0 * np.pi)/alpha)*sinh_over_r/(a)*(np.exp(-xi_max))*(1+xi_max)*(shells.phi_bkg)
+    boundaryphi = boundaryphi * 0.0   # TEMP: disabled for with/without comparison
 
-    # Combine terms: hat_phi_i = -alpha * (outer_term + inner_term)
-    phi = -(exp_over_r * sum_outer + sinh_over_r * sum_inner)
-    phi *= alpha
+    # Combine terms: hat_phi_i = -alpha/(4*pi) * (outer_term + inner_term)
+    # The field eq. (k/a)^2 dphi + m_phi^2 dphi = -g n_nu delta_nu (Eq. 10 of
+    # 2412.20766) carries no 4*pi on the source, so its Green's function is
+    # exp(-xi)/(4*pi*r) -- matching the 4*pi already used in solveYukawaForce.
+    phi = -(exp_over_r * sum_outer + sinh_over_r * sum_inner)+boundaryphi
+    phi *= alpha / (4.0 * np.pi)
 
     # Cache, so no need to recompute force (after last phi iteration)
     shells._cache = {
@@ -92,7 +100,7 @@ def _computePhi(shells, xi_cap=500.0):
 def _stepPhi(shells, phi):
     """One iterative step: set phi -> update m -> compute new phi."""
     shells.data["phi"] = phi
-    phi_min = -0.999 * shells.m0
+    phi_min = -0.9999*shells.m0
     shells.data['phi'] = np.maximum(shells.data['phi'], phi_min)
     shells._update_mass()
     shells._update_eps()
@@ -200,7 +208,7 @@ def solvePhi(
 
     # commit solution
     shells.data["phi"] = phi
-    phi_min = -0.999 * shells.m0
+    phi_min = -shells.m0*0.9999 
     shells.data['phi'] = np.maximum(shells.data['phi'], phi_min)
     shells._update_mass()
     shells._update_eps()
