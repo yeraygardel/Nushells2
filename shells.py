@@ -561,6 +561,10 @@ class Shells:
         hi = self.data['R'] > self.Rmax
         self.data['R'][hi]  = 2.0*self.Rmax - self.data['R'][hi]
         self.data['q'][hi] *= -1.0
+        if hi.any():
+            if not hasattr(self, 'reflect_count_hi'):
+                self.reflect_count_hi = np.zeros(self.N, dtype=int)
+            self.reflect_count_hi[self.data['ID'][hi]] += 1
 
         # -- Sort and updates --
         self._sort()

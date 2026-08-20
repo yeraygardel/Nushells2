@@ -78,12 +78,8 @@ def _computePhi(shells, xi_cap=500.0):
     exp_over_r  = e / R
     sinh_over_r = np.where(capped, 0.0, sinh_xi / R)
     boundaryphi = ((4.0 * np.pi)/alpha)*sinh_over_r/(a)*(np.exp(-xi_max))*(1+xi_max)*(shells.phi_bkg)
-    boundaryphi = boundaryphi * 0.0   # TEMP: disabled for with/without comparison
 
-    # Combine terms: hat_phi_i = -alpha/(4*pi) * (outer_term + inner_term)
-    # The field eq. (k/a)^2 dphi + m_phi^2 dphi = -g n_nu delta_nu (Eq. 10 of
-    # 2412.20766) carries no 4*pi on the source, so its Green's function is
-    # exp(-xi)/(4*pi*r) -- matching the 4*pi already used in solveYukawaForce.
+
     phi = -(exp_over_r * sum_outer + sinh_over_r * sum_inner)+boundaryphi
     phi *= alpha / (4.0 * np.pi)
 

@@ -18,7 +18,7 @@ seed    = 9            # IC random seed
 dt_frac = 0.3          # Time step fractions (Courant-like)
 ti_frac = 54.241701019743985  # Initial time controller (a_i=ti_frac*a_NR); z_ini~10, verified to survive past step 3200 (54.24 rounded crashes at step 2957)
 tf_frac = 2.0          # Final time controller (a_f=tf_frac*1/mphi)
-a_ini   = 0.049072113904004754  # Directly set the starting scale factor (z_ini~19.4)
+a_ini   = 0.0389507  
 a_end   = 0.125   # z_end = 7
 Rmin    = 0.204         # Directly set the inner domain boundary (reflecting wall)
 Rmax    = 140           # Directly set the outer domain boundary (reflecting wall)

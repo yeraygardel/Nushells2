@@ -1,3 +1,0 @@
-- Different sampling at IC?
-- Contribution from infinity
-

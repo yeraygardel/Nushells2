@@ -35,9 +35,11 @@ N  = len(w0)
 Rmin, Rmax = shells.Rmin, shells.Rmax
 m0 = shells.m0
 
-# Track every shell's R across all snapshots (matched by conserved weight)
+# Track every shell's R across all snapshots (matched by ID -- weights are
+# NOT reliably unique, some CSVs have many shells sharing the same rounded
+# weight, which silently breaks weight-based matching for most of them)
 # so we can auto-pick an interesting one and/or plot the chosen one.
-key0 = np.round(w0, 6)
+id0 = shells.ID.copy()
 
 R_traj   = np.full((nfiles, N), np.nan)
 q_traj   = np.full((nfiles, N), np.nan)
@@ -47,12 +49,11 @@ a_traj   = np.full(nfiles, np.nan)
 for i in range(nfiles):
     shells._load(data_dir, i)
     a_traj[i] = shells.a
-    key = np.round(shells.w, 6)
     # map each current shell back to its index in the initial ordering
-    sorter = np.argsort(key0)
-    pos    = np.searchsorted(key0, key, sorter=sorter)
-    pos    = np.clip(pos, 0, len(key0) - 1)
-    good   = key0[sorter][pos] == key
+    sorter = np.argsort(id0)
+    pos    = np.searchsorted(id0, shells.ID, sorter=sorter)
+    pos    = np.clip(pos, 0, len(id0) - 1)
+    good   = id0[sorter][pos] == shells.ID
     idx0   = sorter[pos][good]
     R_traj[i, idx0]   = shells.R[good]
     q_traj[i, idx0]   = shells.q[good]
